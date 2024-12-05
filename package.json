@@ -1,0 +1,19 @@
+{
+  "name": "youtube-tf-escritura",
+  "version": "1.0.0",
+  "description": "Este proyecto (HTML + Python) permite enviar escritura en un dibujo hacia Python para reconocer el número escrito. Se predice según el entrenamiento del dataset MNIST con una red neuronal regular.",
+  "main": "index.js",
+  "scripts": {
+    "dev": "tsx  --watch numeros.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "tsx": "4.19.2"
+  },
+  "dependencies": {
+    "@tensorflow/tfjs-node": "4.22.0",
+    "sharp": "0.33.5"
+  }
+}
