@@ -63,7 +63,7 @@ async function processMnistImage(): Promise<void> {
         // await saveImage(imageBuffer, index);
 
         const buffer = await bufferRow(imageBuffer, index);
-        const item = buffer.readUInt8(index++);
+        const item = buffer.readUInt8(index);
 
         array[i] = item / 255;
       }

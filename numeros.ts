@@ -60,11 +60,18 @@ function indicesToOneHot(indices, numClasses) {
   return oneHotLabels;
 }
 
+async function bufferRow(imageBuffer: Buffer, index: number): Promise<Buffer> {
+  return await sharp(imageBuffer)
+    .extract({ top: index, left: 0, width: 784, height: 1 })
+    .raw()
+    .toBuffer();
+}
+
 // Función para guardar las imágenes
 class MnistData {
   private shuffledTrainIndex = 0;
   private shuffledTestIndex = 0;
-  private datasetImages!: Float32Array;
+  private datasetImages!: Float32Array[];
   private datasetLabels!: Uint8Array;
   private trainIndices!: Uint32Array;
   private testIndices!: Uint32Array;
@@ -89,18 +96,17 @@ class MnistData {
     const images: Float32Array[] = [];
 
     for (let i = 0; i < NUM_DATASET_ELEMENTS; i++) {
-      const datasetBytesView = new Float32Array(784);
+      const array = new Float32Array(784);
 
       for (let j = 0; j < IMAGE_SIZE; j++) {
-        const item = buffer.readUInt8(index++);
-
-        const PIXEL_COLOR = data[i * IMAGE_SIZE + j];
-        const PIXEL_COLOR_NORMALIZED = PIXEL_COLOR / 255;
-        datasetBytesView[i * IMAGE_SIZE + j] = PIXEL_COLOR_NORMALIZED;
+        const buffer = await bufferRow(imageBuffer, i);
+        const item = buffer.readUInt8(i);
+        array[i] = item / 255;
       }
+      images.push(array);
     }
 
-    this.datasetImages = new Float32Array(datasetBytesBuffer);
+    this.datasetImages = images
     this.datasetLabels = new Uint8Array(labelBuffer);
 
     this.trainIndices = tf.util.createShuffledIndices(NUM_TRAIN_ELEMENTS);
