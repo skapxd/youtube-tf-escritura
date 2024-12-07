@@ -1,6 +1,5 @@
 import * as tf from "@tensorflow/tfjs-node";
 import sharp from "sharp";
-import { PNG } from "pngjs";
 import fs from "fs";
 import { randomUUID } from "crypto";
 import { join } from "path";
@@ -21,24 +20,47 @@ const assetsDir = join(__dirname, "assets");
 if (!fs.existsSync(assetsDir)) {
   fs.mkdirSync(assetsDir, { recursive: true });
 }
+/**
+ * Convert one-hot encoded labels to class indices.
+ * @param {Uint8Array} oneHotLabels - One-hot encoded labels array.
+ * @param {number} numClasses - Number of classes in the dataset.
+ * @returns {Int32Array} - Array of class indices.
+ */
+function oneHotToIndices(oneHotLabels, numClasses) {
+  const numLabels = oneHotLabels.length / numClasses;
+  const indices = new Int32Array(numLabels);
 
-// Función para guardar las imágenes
-function saveImage(data: Uint8Array, width: number, height: number) {
-  return new Promise((res) => {
-    const png = new PNG({ width, height });
-    png.data = Buffer.from(data); // Asume que 'data' es un arreglo de píxeles RGBA.
+  for (let i = 0; i < numLabels; i++) {
+    const offset = i * numClasses;
+    for (let j = 0; j < numClasses; j++) {
+      if (oneHotLabels[offset + j] === 1) {
+        indices[i] = j;
+        break;
+      }
+    }
+  }
 
-    const filePath = join(assetsDir, `${randomUUID()}.png`);
-    png
-      .pack()
-      .pipe(fs.createWriteStream(filePath))
-      .on("finish", () => {
-        console.log(`Imagen guardada en: ${filePath}`);
-        res(filePath);
-      });
-  });
+  return indices;
+}
+/**
+ * Convert class indices to one-hot encoded labels.
+ * @param {Int32Array | Array} indices - Array of class indices.
+ * @param {number} numClasses - Total number of classes.
+ * @returns {Uint8Array} - One-hot encoded labels array.
+ */
+function indicesToOneHot(indices, numClasses) {
+  const numLabels = indices.length;
+  const oneHotLabels = new Uint8Array(numLabels * numClasses);
+
+  for (let i = 0; i < numLabels; i++) {
+    const classIndex = indices[i];
+    oneHotLabels[i * numClasses + classIndex] = 1;
+  }
+
+  return oneHotLabels;
 }
 
+// Función para guardar las imágenes
 class MnistData {
   private shuffledTrainIndex = 0;
   private shuffledTestIndex = 0;
@@ -58,30 +80,27 @@ class MnistData {
     const datasetBytesBuffer = new ArrayBuffer(
       NUM_DATASET_ELEMENTS * IMAGE_SIZE * PIXEL_SIZE_RGBA
     );
-    const datasetBytesView = new Float32Array(datasetBytesBuffer);
 
     const sprite = sharp(imageBuffer)
       .raw()
       .toBuffer({ resolveWithObject: true });
     const { data, info } = await sprite;
 
+    const images: Float32Array[] = [];
+
     for (let i = 0; i < NUM_DATASET_ELEMENTS; i++) {
-      const width = 28;
-      const height = 28;
-      const imageData = new Uint8Array(width * height * PIXEL_SIZE_RGBA);
+      const datasetBytesView = new Float32Array(784);
 
       for (let j = 0; j < IMAGE_SIZE; j++) {
+        const item = buffer.readUInt8(index++);
+
         const PIXEL_COLOR = data[i * IMAGE_SIZE + j];
         const PIXEL_COLOR_NORMALIZED = PIXEL_COLOR / 255;
-        datasetBytesView[i * IMAGE_SIZE + j] =  PIXEL_COLOR_NORMALIZED
-        imageData[j * PIXEL_SIZE_RGBA] = PIXEL_COLOR; // Rojo
-        imageData[j * PIXEL_SIZE_RGBA + 1] = PIXEL_COLOR; // Verde
-        imageData[j * PIXEL_SIZE_RGBA + 2] = PIXEL_COLOR; // Azul
-        imageData[j * PIXEL_SIZE_RGBA + 3] = 255; // Alfa (opacidad)
+        datasetBytesView[i * IMAGE_SIZE + j] = PIXEL_COLOR_NORMALIZED;
       }
     }
 
-    this.datasetImages = datasetBytesView;
+    this.datasetImages = new Float32Array(datasetBytesBuffer);
     this.datasetLabels = new Uint8Array(labelBuffer);
 
     this.trainIndices = tf.util.createShuffledIndices(NUM_TRAIN_ELEMENTS);
@@ -91,11 +110,14 @@ class MnistData {
       0,
       IMAGE_SIZE * NUM_TRAIN_ELEMENTS
     );
+
     this.testImages = this.datasetImages.slice(IMAGE_SIZE * NUM_TRAIN_ELEMENTS);
+
     this.trainLabels = this.datasetLabels.slice(
       0,
       NUM_CLASSES * NUM_TRAIN_ELEMENTS
     );
+
     this.testLabels = this.datasetLabels.slice(
       NUM_CLASSES * NUM_TRAIN_ELEMENTS
     );
@@ -162,25 +184,33 @@ function getModel() {
   const model = tf.sequential();
   model.add(
     tf.layers.conv2d({
-      inputShape: [28, 28, 1],
-      kernelSize: 5,
-      filters: 8,
+      filters: 32,
+      kernelSize: [3, 3],
       activation: "relu",
+      inputShape: [28, 28, 1],
     })
   );
-  model.add(tf.layers.maxPooling2d({ poolSize: 2, strides: 2 }));
+
+  model.add(tf.layers.maxPooling2d({ poolSize: [2, 2], strides: [2, 2] }));
+
   model.add(
     tf.layers.conv2d({
-      kernelSize: 5,
-      filters: 16,
+      filters: 64,
+      kernelSize: [3, 3],
       activation: "relu",
     })
   );
-  model.add(tf.layers.maxPooling2d({ poolSize: 2, strides: 2 }));
+  model.add(tf.layers.maxPooling2d({ poolSize: [2, 2] }));
   model.add(tf.layers.flatten());
   model.add(
     tf.layers.dense({
-      units: NUM_CLASSES,
+      units: 100,
+      activation: "softmax",
+    })
+  );
+  model.add(
+    tf.layers.dense({
+      units: 10,
       activation: "softmax",
     })
   );
@@ -198,11 +228,8 @@ async function trainModel() {
   const model = getModel();
 
   const BATCH_SIZE = 512;
-  const TRAIN_DATA_SIZE = 5500;
-  const TEST_DATA_SIZE = 1000;
-
-  const trainBatch = data.nextTrainBatch(BATCH_SIZE);
-  const testBatch = data.nextTestBatch(BATCH_SIZE);
+  const TRAIN_DATA_SIZE = 55000;
+  const TEST_DATA_SIZE = 10000;
 
   const [trainXs, trainYs] = tf.tidy(() => {
     const d = data.nextTrainBatch(TRAIN_DATA_SIZE);

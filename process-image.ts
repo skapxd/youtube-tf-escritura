@@ -16,6 +16,29 @@ function ensureOutputDirectory(dir: string): void {
   }
 }
 
+async function bufferRow(imageBuffer: Buffer, index: number): Promise<Buffer> {
+  return await sharp(imageBuffer)
+    .extract({ top: index, left: 0, width: 784, height: 1 })
+    .raw()
+    .toBuffer();
+}
+
+async function saveImage(imageBuffer: Buffer, index: number) {
+  const outputPath = path.join(outputDir, `image-${index}.png`);
+
+  const row = await bufferRow(imageBuffer, index);
+
+  await sharp(row, {
+    raw: {
+      width: imageSize,
+      height: imageSize,
+      channels: 3,
+    },
+  })
+    .png()
+    .toFile(outputPath);
+}
+
 /**
  * Procesa la imagen MNIST dividiéndola en imágenes individuales y ajustando su visibilidad.
  */
@@ -26,31 +49,25 @@ async function processMnistImage(): Promise<void> {
 
     // Cargar la imagen original
     const imageBuffer: Buffer = fs.readFileSync(inputPath);
-    
+
     // Obtener dimensiones de la imagen
     const metadata = await sharp(imageBuffer).metadata();
     const width = metadata.width || 0;
     const height = metadata.height || 0;
 
-    const outputPath = (index: number) =>
-      path.join(outputDir, `image-${index}.png`);
-
+    const images: Float32Array[] = [];
     for (let index = 0; index <= height; index++) {
-      await sharp(imageBuffer)
-        .extract({ top: index, left: 0, width, height: 1 })
-        .raw()
-        .toBuffer()
-        .then(async (data) => {
-          await sharp(data, {
-            raw: {
-              width: imageSize,
-              height: imageSize,
-              channels: 3,
-            },
-          })
-            .png()
-            .toFile(outputPath(index));
-        });
+      const array = new Float32Array(width);
+
+      for (let i = 0; i < 784; i++) {
+        // await saveImage(imageBuffer, index);
+
+        const buffer = await bufferRow(imageBuffer, index);
+        const item = buffer.readUInt8(index++);
+
+        array[i] = item / 255;
+      }
+      images.push(array);
     }
   } catch (error) {
     console.error("Error procesando imágenes:", error);
