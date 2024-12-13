@@ -39,17 +39,16 @@ const IMAGE_FLAT_SIZE = IMAGE_HEIGHT * IMAGE_WIDTH;
 const LABEL_HEADER_MAGIC_NUM = 2049;
 const LABEL_HEADER_BYTES = 8;
 const LABEL_RECORD_BYTE = 1;
-const LABEL_FLAT_SIZE = 10;
 
 // Downloads a test file only once and returns the buffer for the file.
 async function fetchOnceAndSaveToDiskWithBuffer(filename): Promise<Buffer> {
   return new Promise((resolve) => {
-    const url = `${BASE_URL}${filename}.gz`;
     if (fs.existsSync(filename)) {
       resolve(readFile(filename));
       return;
     }
     const file = fs.createWriteStream(filename);
+    const url = `${BASE_URL}${filename}.gz`;
     console.log(`  * Downloading from: ${url}`);
     https.get(url, (response) => {
       const unzip = zlib.createGunzip();
@@ -65,39 +64,19 @@ function loadHeaderValues(buffer: Buffer, headerLength: number): number[] {
   const headerValues: number[] = [];
   for (let i = 0; i < headerLength / 4; i++) {
     // Header data is stored in-order (aka big-endian)
-    const debugg = buffer[i * 4];
     headerValues[i] = buffer.readUInt32BE(i * 4);
   }
-  const buffer2 = Buffer.from([
-    // El `8` representa el tipo de dato (Unsigned Byte) y el `3` representa el numero de dimensiones,
-    // Estos valores se transforman a hexadecimal `0x0803` lo que da como resultado un valor de base decimal de `2051`
-    // El valor `2051` es un numero mágico que sirve para identificar el tipo de archivo que se esta leyendo
-    0,
-    0, 8, 3,
-    // Los numeros [0, 0, 234, 96] representan la cantidad de imágenes que se encuentran en el archivo
-    // Estos valores se transforman en hexadecimal `0xEA60` lo que da como resultado un valor de base decimal de `60000`
-    0,
-    0, 234, 96,
-    // Los números [0, 0, 0, 28] representan la cantidad de pixeles de ancho que tiene cada imagen
-    0,
-    0, 0, 28,
-    // Los números [0, 0, 0, 28] representan la cantidad de pixeles de alto que tiene cada imagen
-    0,
-    0, 0, 28,
-  ]);
-  const h = buffer2.readUInt32BE(1 * 4);
+
   return headerValues;
 }
 
-async function loadImages(filename) {
+async function loadImages(filename: string) {
   const buffer = await fetchOnceAndSaveToDiskWithBuffer(filename);
 
   const dir = "./output-images/";
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
-
-  // const metadata = await sharp(buffer).metadata();
 
   const headerBytes = IMAGE_HEADER_BYTES;
   const recordBytes = IMAGE_HEIGHT * IMAGE_WIDTH;
@@ -109,8 +88,9 @@ async function loadImages(filename) {
 
   const images: Float32Array[] = [];
   let index = headerBytes;
-  const imageCompress = Buffer.alloc(recordBytes * 60_000 * 4, 0);
+  const imageCompress = Buffer.alloc(recordBytes * headerValues[1] * 4, 0);
   while (index < buffer.byteLength) {
+    // 63_929 - 784_0016
     const array = new Float32Array(recordBytes);
     for (let i = 0; i < recordBytes; i++) {
       // Normalize the pixel values into the 0-1 interval, from
@@ -122,17 +102,11 @@ async function loadImages(filename) {
     images.push(array);
   }
 
-  const metadata = await sharp(imageCompress, {
-    raw: { width: 784, height: 60000, channels: 1 },
-  })
-    .png({compressionLevel: 9})
-    .toFile("./image.png");
-
   assert.equal(images.length, headerValues[1]);
   return images;
 }
 
-async function loadLabels(filename) {
+async function loadLabels(filename: string) {
   const buffer = await fetchOnceAndSaveToDiskWithBuffer(filename);
 
   const headerBytes = LABEL_HEADER_BYTES;
@@ -155,13 +129,49 @@ async function loadLabels(filename) {
   return labels;
 }
 
+async function getLabelsCount(filename: string) {
+  const buffer = await fetchOnceAndSaveToDiskWithBuffer(filename);
+
+  const headerBytes = LABEL_HEADER_BYTES;
+  const recordBytes = LABEL_RECORD_BYTE;
+
+  const headerValues = loadHeaderValues(buffer, headerBytes);
+  assert.equal(headerValues[0], LABEL_HEADER_MAGIC_NUM);
+
+  const labels: Int32Array[] = [];
+  let index = headerBytes;
+  while (index < buffer.byteLength) {
+    const array = new Int32Array(recordBytes);
+    for (let i = 0; i < recordBytes; i++) {
+      array[i] = buffer.readUInt8(index++);
+    }
+    labels.push(array);
+  }
+
+  assert.equal(labels.length, headerValues[1]);
+
+  const cantidadDeEtiquetasUnicas = (() => {
+    const arr = labels.map((e) => e.at(0));
+    const total = new Set(arr).size;
+    return total;
+  })();
+
+  return cantidadDeEtiquetasUnicas;
+}
+
 /** Helper class to handle loading training and test data. */
 class MnistDataset {
-  dataset;
+  dataset: [
+    Float32Array<ArrayBufferLike>[],
+    Int32Array<ArrayBufferLike>[],
+    Float32Array<ArrayBufferLike>[],
+    Int32Array<ArrayBuffer>[]
+  ];
   trainSize;
   testSize;
   trainBatchIndex;
   testBatchIndex;
+  LABEL_FLAT_SIZE: number = 0;
 
   constructor() {
     this.dataset = null;
@@ -171,8 +181,19 @@ class MnistDataset {
     this.testBatchIndex = 0;
   }
 
+  private async getTags() {
+    const a = await getLabelsCount(TRAIN_LABELS_FILE);
+    const b = await getLabelsCount(TEST_LABELS_FILE);
+
+    if (a != b) throw new Error("Son diferentes longitudes");
+
+    this.LABEL_FLAT_SIZE = a;
+  }
+
   /** Loads training and test data. */
   async loadData() {
+    await this.getTags();
+
     this.dataset = await Promise.all([
       loadImages(TRAIN_IMAGES_FILE),
       loadLabels(TRAIN_LABELS_FILE),
@@ -231,7 +252,7 @@ class MnistDataset {
     return {
       images: tf.tensor4d(images, imagesShape),
       labels: tf
-        .oneHot(tf.tensor1d(labels, "int32"), LABEL_FLAT_SIZE)
+        .oneHot(tf.tensor1d(labels, "int32"), this.LABEL_FLAT_SIZE)
         .toFloat(),
     };
   }

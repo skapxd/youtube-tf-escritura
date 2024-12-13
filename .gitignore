@@ -1,2 +1,5 @@
 node_modules/
 output-images
+output-label
+idx/output
+test-reporter

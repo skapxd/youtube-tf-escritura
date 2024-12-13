@@ -106,7 +106,7 @@ class MnistData {
       images.push(array);
     }
 
-    this.datasetImages = images
+    this.datasetImages = images;
     this.datasetLabels = new Uint8Array(labelBuffer);
 
     this.trainIndices = tf.util.createShuffledIndices(NUM_TRAIN_ELEMENTS);
