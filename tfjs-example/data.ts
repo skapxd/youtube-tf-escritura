@@ -41,7 +41,9 @@ const LABEL_HEADER_BYTES = 8;
 const LABEL_RECORD_BYTE = 1;
 
 // Downloads a test file only once and returns the buffer for the file.
-async function fetchOnceAndSaveToDiskWithBuffer(filename): Promise<Buffer> {
+async function fetchOnceAndSaveToDiskWithBuffer(
+  filename: string
+): Promise<Buffer> {
   return new Promise((resolve) => {
     if (fs.existsSync(filename)) {
       resolve(readFile(filename));
